@@ -1,0 +1,18 @@
+[package]
+name = "solana-deployer"
+version = "0.1.0"
+authors = ["acheron <acheroncrypto@gmail.com>"]
+license = "MIT"
+description = "Deploy your Solana programs during high load."
+keywords = ["solana", "deploy", "program"]
+repository = "https://github.com/acheroncrypto/solana-deployer.git"
+edition = "2021"
+
+[dependencies]
+solana-sdk = "1.10.6"
+solana-client = "1.10.6"
+solana-program-runtime = "1.10.6"
+solana-bpf-loader-program = "1.10.6"
+solana_rbpf = "0.2.24"
+bincode = "1.3.3"
+dotenv = "0.15.0"
