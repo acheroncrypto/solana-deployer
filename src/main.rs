@@ -1,12 +1,14 @@
 use std::{
     fs::File,
     io::Read,
-    thread,
     time::{Duration, SystemTime},
 };
 
+use crossbeam::thread;
 use solana_bpf_loader_program::{syscalls::register_syscalls, BpfError, ThisInstructionMeter};
-use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
+use solana_client::{
+    client_error::ClientError, rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig,
+};
 use solana_program_runtime::invoke_context::InvokeContext;
 use solana_rbpf::{elf, verifier, vm};
 use solana_sdk::{
@@ -57,6 +59,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program_data =
         read_and_verify_elf(&dotenv::var("PROGRAM_PATH")?[..]).unwrap_or_else(|e| panic!("{e}"));
     let program_len = program_data.len();
+
+    // Start timer
+    let program_start_time = SystemTime::now();
 
     // Create buffer
     let buffer_kp = Keypair::new();
@@ -124,36 +129,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let chunk_size = calculate_max_chunk_size(&create_msg);
     let buffer_tx_count = buffer_len / chunk_size + 2;
 
-    println!("Confirmed (1/{}: {}", buffer_tx_count, create_buffer_hash);
+    println!("Confirmed (1/{}): {}", buffer_tx_count, create_buffer_hash);
 
-    let start_time = SystemTime::now();
+    let mut start_time = SystemTime::now();
 
-    for (i, chunk) in program_data.chunks(chunk_size).enumerate() {
+    let payer_kp_ref = &payer_kp;
+    let client = &client;
+
+    let thread_count = dotenv::var("THREAD_COUNT")
+        .unwrap_or(String::from("1"))
+        .parse::<usize>()?;
+
+    for (i, threads_chunk) in program_data.chunks(chunk_size * thread_count).enumerate() {
         let current_time = SystemTime::now();
         let time_passed = current_time.duration_since(start_time)?.as_secs();
         if time_passed > 30 {
             recent_hash = client
                 .get_latest_blockhash()
                 .expect("Couldn't get recent blockhash");
+
+            start_time = SystemTime::now();
         }
 
-        let offset = (i * chunk_size).try_into()?;
+        // Spawn threads
+        thread::scope(move |s| {
+            for j in 0..thread_count {
+                let total_index = i * thread_count + j;
 
-        let write_msg = create_msg(offset, chunk.to_vec());
+                s.spawn(move |_| {
+                    let offset = (total_index * chunk_size) as u32;
+                    if offset >= program_len as u32 {
+                        return;
+                    }
 
-        let write_tx = Transaction::new(&[&payer_kp], write_msg, recent_hash);
+                    let chunks: Vec<&[u8]> = threads_chunk
+                        .chunks(chunk_size)
+                        .enumerate()
+                        .filter(|(i, _)| i == &j)
+                        .map(|(_, b)| b)
+                        .collect();
 
-        let write_hash = client
-            .send_and_confirm_transaction_with_spinner_and_config(
-                &write_tx,
-                commitment_config,
-                send_config,
-            )
-            .expect("Write tx error");
+                    let write_msg = create_msg(offset, chunks[0].to_vec());
 
-        println!("Confirmed ({}/{}): {}", i + 2, buffer_tx_count, write_hash);
+                    let write_tx = Transaction::new(&[payer_kp_ref], write_msg, recent_hash);
 
-        thread::sleep(Duration::from_millis(dotenv::var("SLEEP")?.parse::<u64>()?));
+                    let write_hash = send_and_confirm_transaction_with_config(
+                        &client,
+                        &write_tx,
+                        commitment_config,
+                        send_config,
+                    )
+                    .expect("Write tx error");
+
+                    println!(
+                        "Confirmed ({}/{}): {}",
+                        total_index + 2,
+                        buffer_tx_count,
+                        write_hash
+                    );
+                });
+            }
+        })
+        .unwrap();
     }
 
     // Deploy / upgrade
@@ -215,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let finish_time = SystemTime::now();
-    let time_passed = finish_time.duration_since(start_time)?.as_secs();
+    let time_passed = finish_time.duration_since(program_start_time)?.as_secs();
     Ok(println!("Success! Completed in {time_passed}s",))
 }
 
@@ -258,4 +295,29 @@ fn read_and_verify_elf(program_location: &str) -> Result<Vec<u8>, Box<dyn std::e
     .map_err(|err| format!("ELF error: {}", err))?;
 
     Ok(program_data)
+}
+
+fn send_and_confirm_transaction_with_config(
+    client: &RpcClient,
+    transaction: &Transaction,
+    commitment: CommitmentConfig,
+    config: RpcSendTransactionConfig,
+) -> Result<Signature, ClientError> {
+    let hash = client.send_transaction_with_config(transaction, config)?;
+    loop {
+        let confirmed = client
+            .confirm_transaction_with_commitment(&hash, commitment)?
+            .value;
+        if confirmed == true {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(
+            dotenv::var("SLEEP")
+                .unwrap_or(String::from("0"))
+                .parse::<u64>()
+                .unwrap(),
+        ));
+    }
+
+    Ok(hash)
 }
