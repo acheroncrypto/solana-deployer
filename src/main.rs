@@ -27,8 +27,10 @@ use solana_sdk::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
+    let timeout_sec = dotenv::var("TIMEOUT")?.parse::<u64>()?;
+
     let url = dotenv::var("RPC_ENDPOINT")?;
-    let timeout = Duration::from_secs(dotenv::var("TIMEOUT")?.parse::<u64>()?);
+    let timeout = Duration::from_secs(timeout_sec);
     let commitment_config = CommitmentConfig::processed();
     let confirm_transaction_initial_timeout = Duration::from_secs(5);
     let send_config = RpcSendTransactionConfig {
@@ -178,6 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &write_tx,
                         commitment_config,
                         send_config,
+                        timeout_sec,
                     )
                     .expect("Write tx error");
 
@@ -302,21 +305,35 @@ fn send_and_confirm_transaction_with_config(
     transaction: &Transaction,
     commitment: CommitmentConfig,
     config: RpcSendTransactionConfig,
+    timeout: u64,
 ) -> Result<Signature, ClientError> {
-    let hash = client.send_transaction_with_config(transaction, config)?;
-    loop {
-        let confirmed = client
-            .confirm_transaction_with_commitment(&hash, commitment)?
-            .value;
-        if confirmed == true {
-            break;
+    let mut hash;
+
+    'outer: loop {
+        hash = client.send_transaction_with_config(transaction, config)?;
+
+        let start_time = SystemTime::now();
+
+        loop {
+            let confirmed = client
+                .confirm_transaction_with_commitment(&hash, commitment)?
+                .value;
+            if confirmed == true {
+                break 'outer;
+            }
+
+            let current_time = SystemTime::now();
+            if current_time.duration_since(start_time).unwrap().as_secs() > timeout {
+                break;
+            }
+
+            std::thread::sleep(Duration::from_millis(
+                dotenv::var("SLEEP")
+                    .unwrap_or(String::from("0"))
+                    .parse::<u64>()
+                    .unwrap(),
+            ));
         }
-        std::thread::sleep(Duration::from_millis(
-            dotenv::var("SLEEP")
-                .unwrap_or(String::from("0"))
-                .parse::<u64>()
-                .unwrap(),
-        ));
     }
 
     Ok(hash)
