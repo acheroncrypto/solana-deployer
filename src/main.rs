@@ -16,6 +16,7 @@ use solana_sdk::{
         close, create_buffer, deploy_with_max_program_len, upgrade, write, UpgradeableLoaderState,
     },
     commitment_config::{CommitmentConfig, CommitmentLevel},
+    hash::Hash,
     message::Message,
     packet::PACKET_DATA_SIZE,
     signature::{read_keypair_file, Keypair, Signature},
@@ -120,12 +121,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Create buffer tx error");
 
     // Write buffer
-    let recent_hash_clone = recent_hash.clone();
+    // let recent_hash_clone = recent_hash.clone();
 
-    let create_msg = |offset: u32, bytes: Vec<u8>| {
+    let create_msg = |offset: u32, bytes: Vec<u8>, recent_hash: Hash| {
         let write_ix = write(&buffer_pk, &payer_pk, offset, bytes);
 
-        Message::new_with_blockhash(&[write_ix], Some(&payer_pk), &recent_hash_clone)
+        Message::new_with_blockhash(&[write_ix], Some(&payer_pk), &recent_hash)
     };
 
     let chunk_size = calculate_max_chunk_size(&create_msg);
@@ -142,14 +143,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(String::from("1"))
         .parse::<usize>()?;
 
-    let close_buffer = || {
+    let close_buffer = |recent_hash: Hash| {
         let close_ix = close(&buffer_pk, &payer_pk, &payer_pk);
 
         let close_tx = Transaction::new_signed_with_payer(
             &[close_ix],
             Some(&payer_pk),
             &[&payer_kp],
-            recent_hash_clone,
+            recent_hash,
         );
 
         client
@@ -190,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .map(|(_, b)| b)
                         .collect();
 
-                    let write_msg = create_msg(offset, chunks[0].to_vec());
+                    let write_msg = create_msg(offset, chunks[0].to_vec(), recent_hash);
 
                     let write_tx = Transaction::new(&[payer_kp_ref], write_msg, recent_hash);
 
@@ -214,7 +215,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         if let Err(_) = result {
-            close_buffer();
+            close_buffer(recent_hash);
         }
     }
 
@@ -276,19 +277,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Close buffer if it failed
     if let Err(_) = result {
-        close_buffer();
+        close_buffer(recent_hash);
     }
 
     let finish_time = SystemTime::now();
     let time_passed = finish_time.duration_since(program_start_time)?.as_secs();
-    Ok(println!("Success! Completed in {time_passed}s",))
+    Ok(println!("✅ Success! Completed in {time_passed}s",))
 }
 
 fn calculate_max_chunk_size<F>(create_msg: &F) -> usize
 where
-    F: Fn(u32, Vec<u8>) -> Message,
+    F: Fn(u32, Vec<u8>, Hash) -> Message,
 {
-    let baseline_msg = create_msg(0, Vec::new());
+    let baseline_msg = create_msg(0, Vec::new(), Hash::new_unique());
     let tx_size = bincode::serialized_size(&Transaction {
         signatures: vec![
             Signature::default();
