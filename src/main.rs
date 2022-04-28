@@ -13,7 +13,7 @@ use solana_program_runtime::invoke_context::InvokeContext;
 use solana_rbpf::{elf, verifier, vm};
 use solana_sdk::{
     bpf_loader_upgradeable::{
-        create_buffer, deploy_with_max_program_len, upgrade, write, UpgradeableLoaderState,
+        close, create_buffer, deploy_with_max_program_len, upgrade, write, UpgradeableLoaderState,
     },
     commitment_config::{CommitmentConfig, CommitmentLevel},
     message::Message,
@@ -31,10 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let url = dotenv::var("RPC_ENDPOINT")?;
     let timeout = Duration::from_secs(timeout_sec);
-    let commitment_config = CommitmentConfig::processed();
+    let commitment_config = CommitmentConfig::confirmed();
     let confirm_transaction_initial_timeout = Duration::from_secs(5);
     let send_config = RpcSendTransactionConfig {
-        preflight_commitment: Some(CommitmentLevel::Processed),
+        preflight_commitment: Some(CommitmentLevel::Confirmed),
         max_retries: Some(dotenv::var("MAX_RETRIES")?.parse::<usize>()?),
         ..Default::default()
     };
@@ -142,6 +142,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(String::from("1"))
         .parse::<usize>()?;
 
+    let close_buffer = || {
+        let close_ix = close(&buffer_pk, &payer_pk, &payer_pk);
+
+        let close_tx = Transaction::new_signed_with_payer(
+            &[close_ix],
+            Some(&payer_pk),
+            &[&payer_kp],
+            recent_hash_clone,
+        );
+
+        client
+            .send_and_confirm_transaction_with_spinner_and_config(
+                &close_tx,
+                commitment_config,
+                send_config,
+            )
+            .expect("Unable to close the buffer");
+    };
+
     for (i, threads_chunk) in program_data.chunks(chunk_size * thread_count).enumerate() {
         let current_time = SystemTime::now();
         let time_passed = current_time.duration_since(start_time)?.as_secs();
@@ -154,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Spawn threads
-        thread::scope(move |s| {
+        let result = thread::scope(move |s| {
             for j in 0..thread_count {
                 let total_index = i * thread_count + j;
 
@@ -192,8 +211,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 });
             }
-        })
-        .unwrap();
+        });
+
+        if let Err(_) = result {
+            close_buffer();
+        }
     }
 
     // Deploy / upgrade
@@ -201,6 +223,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recent_hash = client
         .get_latest_blockhash()
         .expect("Couldn't get recent blockhash");
+
+    let result;
 
     if let Err(_) = program_account {
         println!("Deploying {}", program_pk.to_string());
@@ -226,13 +250,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             recent_hash,
         );
 
-        client
-            .send_and_confirm_transaction_with_spinner_and_config(
-                &deploy_tx,
-                commitment_config,
-                send_config,
-            )
-            .expect("Deploy tx error");
+        result = client.send_and_confirm_transaction_with_spinner_and_config(
+            &deploy_tx,
+            commitment_config,
+            send_config,
+        )
     } else {
         println!("Upgrading {}", program_pk.to_string());
 
@@ -245,13 +267,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             recent_hash,
         );
 
-        client
-            .send_and_confirm_transaction_with_spinner_and_config(
-                &upgrade_tx,
-                commitment_config,
-                send_config,
-            )
-            .expect("Upgrade tx error");
+        result = client.send_and_confirm_transaction_with_spinner_and_config(
+            &upgrade_tx,
+            commitment_config,
+            send_config,
+        )
+    }
+
+    // Close buffer if it failed
+    if let Err(_) = result {
+        close_buffer();
     }
 
     let finish_time = SystemTime::now();
@@ -315,11 +340,10 @@ fn send_and_confirm_transaction_with_config(
         let start_time = SystemTime::now();
 
         loop {
-            let confirmed = client
-                .confirm_transaction_with_commitment(&hash, commitment)?
-                .value;
-            if confirmed == true {
-                break 'outer;
+            if let Ok(resp) = client.confirm_transaction_with_commitment(&hash, commitment) {
+                if resp.value {
+                    break 'outer;
+                }
             }
 
             let current_time = SystemTime::now();
