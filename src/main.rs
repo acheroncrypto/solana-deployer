@@ -30,7 +30,7 @@ use clap::Parser;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     #[clap(short, long, default_value_t = dotenv::var("RPC_ENDPOINT").unwrap())]
-    pub rpc_endpoint: String,
+    rpc_endpoint: String,
 
     #[clap(short, long, default_value_t = dotenv::var("TIMEOUT").unwrap())]
     timeout: String,
@@ -38,16 +38,16 @@ struct Args {
     #[clap(short, long, default_value_t = dotenv::var("MAX_RETRIES").unwrap())]
     max_retries: String,
     
-    #[clap(short, long, default_value_t = dotenv::var("PAYER_KP_PATH").unwrap())]
+    #[clap(long="payer", default_value_t = dotenv::var("PAYER_KP_PATH").unwrap())]
     payer_kp_path: String,
     
-    #[clap(short, long, default_value_t = dotenv::var("PROGRAM_KP_PATH").unwrap())]
+    #[clap(long, default_value_t = dotenv::var("PROGRAM_KP_PATH").unwrap())]
     program_kp_path: String,
    
-    #[clap(short, long, default_value_t = dotenv::var("PROGRAM_PATH").unwrap())]
+    #[clap(long, default_value_t = dotenv::var("PROGRAM_PATH").unwrap())]
     program_path: String,
     
-    #[clap(short, long, default_value_t = dotenv::var("THREAD_COUNT").unwrap())]
+    #[clap(long, default_value_t = dotenv::var("THREAD_COUNT").unwrap())]
     thread_count: String,
     
     #[clap(short, long, default_value_t = dotenv::var("SLEEP").unwrap())]
@@ -58,6 +58,7 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
     let args = Args::parse();
+    println!("{:?}", args);
 
     let timeout_sec = args.timeout.parse::<u64>()?;
     let url = args.rpc_endpoint;
