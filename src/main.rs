@@ -24,19 +24,49 @@ use solana_sdk::{
     transaction::Transaction,
     transaction_context::TransactionContext,
 };
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(short, long, default_value_t = dotenv::var("RPC_ENDPOINT").unwrap())]
+    pub rpc_endpoint: String,
+
+    #[clap(short, long, default_value_t = dotenv::var("TIMEOUT").unwrap())]
+    timeout: String,
+
+    #[clap(short, long, default_value_t = dotenv::var("MAX_RETRIES").unwrap())]
+    max_retries: String,
+    
+    #[clap(short, long, default_value_t = dotenv::var("PAYER_KP_PATH").unwrap())]
+    payer_kp_path: String,
+    
+    #[clap(short, long, default_value_t = dotenv::var("PROGRAM_KP_PATH").unwrap())]
+    program_kp_path: String,
+   
+    #[clap(short, long, default_value_t = dotenv::var("PROGRAM_PATH").unwrap())]
+    program_path: String,
+    
+    #[clap(short, long, default_value_t = dotenv::var("THREAD_COUNT").unwrap())]
+    thread_count: String,
+    
+    #[clap(short, long, default_value_t = dotenv::var("SLEEP").unwrap())]
+    sleep: String,
+    
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
+    let args = Args::parse();
 
-    let timeout_sec = dotenv::var("TIMEOUT")?.parse::<u64>()?;
-
-    let url = dotenv::var("RPC_ENDPOINT")?;
+    let timeout_sec = args.timeout.parse::<u64>()?;
+    let url = args.rpc_endpoint;
     let timeout = Duration::from_secs(timeout_sec);
     let commitment_config = CommitmentConfig::confirmed();
     let confirm_transaction_initial_timeout = Duration::from_secs(5);
     let send_config = RpcSendTransactionConfig {
         preflight_commitment: Some(CommitmentLevel::Confirmed),
-        max_retries: Some(dotenv::var("MAX_RETRIES")?.parse::<usize>()?),
+        max_retries: Some(args.max_retries.parse::<usize>()?),
         ..Default::default()
     };
 
@@ -49,14 +79,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Payer
     let payer_kp =
-        read_keypair_file(dotenv::var("PAYER_KP_PATH")?).expect("Couldn't read payer keypair");
+        read_keypair_file(args.payer_kp_path).expect("Couldn't read payer keypair");
     let payer_pk = payer_kp.pubkey();
 
     println!("Payer: {}", payer_pk.to_string());
 
     // Program
     let program_kp =
-        read_keypair_file(dotenv::var("PROGRAM_KP_PATH")?).expect("Couldn't read program keypair");
+        read_keypair_file(args.program_kp_path).expect("Couldn't read program keypair");
     let program_pk = program_kp.pubkey();
 
     let program_data =
@@ -139,8 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let payer_kp_ref = &payer_kp;
     let client = &client;
 
-    let thread_count = dotenv::var("THREAD_COUNT")
-        .unwrap_or(String::from("1"))
+    let thread_count = args.thread_count
         .parse::<usize>()?;
 
     let close_buffer = |recent_hash: Hash| {
