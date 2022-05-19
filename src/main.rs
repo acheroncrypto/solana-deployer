@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program_pk = program_kp.pubkey();
 
     let program_data =
-        read_and_verify_elf(&dotenv::var("PROGRAM_PATH")?[..]).unwrap_or_else(|e| panic!("{e}"));
+        read_and_verify_elf(&args.program_path[..]).unwrap_or_else(|e| panic!("{e}"));
     let program_len = program_data.len();
 
     // Start timer
@@ -363,6 +363,7 @@ fn send_and_confirm_transaction_with_config(
     config: RpcSendTransactionConfig,
     timeout: u64,
 ) -> Result<Signature, ClientError> {
+    let args = Args::parse();
     let mut hash;
 
     'outer: loop {
@@ -383,8 +384,7 @@ fn send_and_confirm_transaction_with_config(
             }
 
             std::thread::sleep(Duration::from_millis(
-                dotenv::var("SLEEP")
-                    .unwrap_or(String::from("0"))
+                args.sleep
                     .parse::<u64>()
                     .unwrap(),
             ));
