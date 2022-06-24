@@ -1,6 +1,6 @@
 # solana-deployer
 
-### IMPORTANT: There is a known bug with the current program that will be fixed soon. In the meantime you should deploy from [Solana Playground Github](https://github.com/solana-playground/solana-playground).
+### IMPORTANT: This project is not actively maintained. If you have problems with deploying you should try [Solana Playground Github](https://github.com/solana-playground/solana-playground).
 
 Deploy your Solana programs during high load.
 
